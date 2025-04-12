@@ -81,7 +81,16 @@ df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
   - High Volatility
   - Low Volatility
 
-Recommended Duration: Minimum 1 Year → Best: 2-3 Years
+### Recommended Duration: 
+- Minimum 1 Year
+- → Best: 2-3 Years
+
+### Each sample of training data: 
+- 60 min window
+    - takes last 60 min candle data to predict for the next candle
+    - analyzes pattern and try to capture the trend
+    - more data than this will create much more noise and might confuse as that might not be contributing much
+    - less data might limit the pattern capturing and can have insufficient data and very much affected to local noise
 
 ---
 
