@@ -225,65 +225,126 @@ if current_position == 'BUY' and action == 'SELL':
 
 ---
 
-## 7. Model Selection for RL in Trading
 
-| Model | Pros | Cons | Solution |
-|-------|------|------|-----------|
-| LSTM based PPO | Captures Sequence Patterns | Sample inefficient, Forget long-term | Experience Replay, Longer Window |
-| Transformer based PPO | Captures Global Patterns | High Resource Consumption | Reduce layers/heads |
-| ARS (Augmented Random Search) | Very Fast, Simpler | No sequence handling | Combine with LSTM window state |
-| GRU based PPO | Light weight sequence handling | Slightly less accurate than LSTM | Good for lower resource setup |
+## 7. Model Selection Overview for Real-Time Trading Bot
 
----
-
-## Final Selected Model: PPO with LSTM
-Why?
-- Market is Sequential
-- Pattern memory is essential
-- Controlled resource need
+### Why Careful Model Selection?
+- Stock Market is noisy, volatile & non-stationary.
+- Wrong model = Overfitting or Underperformance.
+- Need balance between performance & real-time inference speed.
 
 ---
 
-## 8. Model Architecture Design - PyTorch (No External Library)
+## Comparison of Candidate Algorithms
 
-### Input → Last 60 OHLCV Candles → Shape (60,6)
+| Algorithm | Pros | Cons | Recommended Usage |
+|-----------|------|------|------------------|
+| PPO + LSTM | Stable, Proven, Time-series friendly | May miss global patterns | Excellent baseline for trading |
+| PPO + Transformer | Captures global dependencies | Slower, resource heavy | Feasible with light design on 9GB Machine |
+| ARS | Super Fast, Gradient-free | No sequence learning | Only for highly feature-engineered scalping |
+| DDPG | Continuous Action Control | Sensitive, overfits, bad for discrete trading | Avoid for Buy/Sell/Hold setup |
 
-### Architecture Layers:
-| Layer | Why Needed | Configuration |
-|-------|-------------|----------------|
-|LSTM Layer| Sequence Learning | Hidden Size=128 |
-|FC Layer 1| Feature Compression | 128→64 |
-|Actor Head| Action Output | Linear(64,3) |
-|Critic Head| Value Prediction | Linear(64,1) |
-|Confidence Head| Confidence of Action | Linear(64,1) + Sigmoid |
+---
 
-### Architecture Python Code:
+## Final Architecture Selected:
+> PPO + Conv1D + Transformer Encoder + Stacked LSTM
+
+Reason:
+- Conv1D → Extract candle-wise patterns
+- Transformer → Capture global sequence relations
+- LSTM → Preserve order and memory
+- PPO → Stable RL optimizer
+- Confidence Head → Avoid random trades
+
+---
+
+## 8. Final Model Architecture Design
+
+### Input:
+- Last 60 OHLCV candles → Shape = (60,6)
+
+### Architecture Flow:
+```
+Input: (Batch, 60, 6)
+↓
+Conv1D Layer (local pattern smoothing)
+↓
+Transformer Encoder Layer (light)
+↓
+2 Layer LSTM (128 → 64)
+↓
+Fully Connected Layer (64 → 64)
+↓
+Outputs →
+  → Actor Head (3 Neurons) → Buy/Sell/Hold Probabilities
+  → Critic Head (1 Neuron) → V(s)
+  → Confidence Head (1 Neuron with Sigmoid) → Confidence (0-1)
+```
+
+---
+
+## Model Architecture Layerwise Reasoning
+
+| Layer | Purpose | Reason |
+|-------|---------|--------|
+|Conv1D| Extract small candle patterns| Like Hammer, Doji etc|
+|Transformer| Global relation capture | Captures trend shifts |
+|LSTM Layer 1| Sequence Memory | Handle time dynamics |
+|LSTM Layer 2| Compression & Smoothing | Avoid overfitting |
+|FC Layer| Feature fusion | Connect hidden to output |
+|Actor Head| Output Action probabilities | Select Buy/Sell/Hold |
+|Critic Head| Predict V(s) | Estimate future value |
+|Confidence Head| Predict reliability | Select only best trades |
+
+---
+
+## Model Architecture PyTorch Code (Skeleton)
+
 ```python
 import torch
 import torch.nn as nn
 
 class TradingRLModel(nn.Module):
-    def __init__(self, input_dim, hidden_dim=128):
+    def __init__(self, input_dim=6, seq_len=60, hidden_dim=128):
         super(TradingRLModel, self).__init__()
 
-        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
-        self.fc1 = nn.Linear(hidden_dim, 64)
+        self.conv = nn.Conv1d(in_channels=input_dim, out_channels=32, kernel_size=3, padding=1)
 
-        self.actor = nn.Linear(64, 3)  # Buy, Sell, Hold
-        self.critic = nn.Linear(64, 1)  # V(s)
-        self.confidence = nn.Linear(64, 1)  # Sigmoid later
+        encoder_layer = nn.TransformerEncoderLayer(d_model=32, nhead=2)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=1)
+
+        self.lstm = nn.LSTM(input_size=32, hidden_size=hidden_dim, num_layers=2, batch_first=True)
+        
+        self.fc1 = nn.Linear(hidden_dim, 64)
+        self.actor = nn.Linear(64, 3)
+        self.critic = nn.Linear(64, 1)
+        self.confidence = nn.Linear(64, 1)
 
     def forward(self, x):
+        x = x.permute(0, 2, 1)  # for Conv1D
+        x = torch.relu(self.conv(x))
+        x = x.permute(0, 2, 1)  # back to (batch, seq, features)
+
+        x = self.transformer(x)
         lstm_out, _ = self.lstm(x)
-        x = lstm_out[:, -1, :]  # Last timestep output
+        x = lstm_out[:, -1, :]
+
         x = torch.relu(self.fc1(x))
-
-        action_logits = self.actor(x)
-        state_value = self.critic(x)
-        conf_score = torch.sigmoid(self.confidence(x))
-
-        return action_logits, state_value, conf_score
+        
+        return self.actor(x), self.critic(x), torch.sigmoid(self.confidence(x))
 ```
+
+---
+
+## Assuming 8 gb gpu
+
+| Benefit | Why |
+|---------|-----|
+|Conv1D + Transformer| Lightweight sequence feature enhancer |
+|Stacked LSTM| Real trading friendly |
+|Separate Heads| Multi-task learning for stability |
+|Confidence Prediction| Trade only when model is highly sure |
+
 
 ---
 
@@ -384,6 +445,114 @@ def calculate_reward(entry_price, exit_price, penalty, bonus, position_type):
 ```
 
 ---
+
+## 10 Updated. Reward Function Design for Real-World Trading Scenario
+
+### Objective:
+Reward function should:
+- Encourage high profit trades
+- Penalize unnecessary trades
+- Reward holding strong trend trades
+- Discourage bad entries or exits
+- Reward risk management like SL usage
+
+---
+
+## Real World Reward Function Formula
+
+```
+Reward = λ₁ * Profit Component - λ₂ * Penalty Component + λ₃ * Hold Bonus + λ₄ * SL Usage Bonus
+```
+
+Where:
+- λ₁ = Weight for Profit (Example: 1)
+- λ₂ = Weight for Penalty (Example: 0.1)
+- λ₃ = Bonus for Holding profitable trades longer (Example: 0.05 per minute)
+- λ₄ = Bonus for using Stop Loss correctly (Example: 0.1)
+
+---
+
+## Profit Component:
+```
+Profit = Exit Price - Entry Price (BUY)
+Profit = Entry Price - Exit Price (SELL)
+```
+
+---
+
+## Penalty Component:
+Applied when:
+- SL hit
+- Trade exit in loss
+- Overtrading
+
+Fixed or dynamic penalty based on mistake type.
+
+Example: -0.1 per bad exit
+
+---
+
+## Hold Bonus:
+Encourage holding longer in clear trend.
+```
+Hold Bonus = (Holding Duration in minutes) * λ₃
+```
+
+---
+
+## SL Usage Bonus:
+Reward for respecting Stop Loss execution.
+```
+SL Bonus = λ₄ (if SL was used properly)
+```
+
+---
+
+## Final Reward Calculation Example:
+BUY Trade:
+- Entry at ₹100
+- Exit at ₹105
+- Holding for 5 mins
+- No SL hit
+
+```
+Profit = 105 - 100 = ₹5
+Penalty = 0
+Hold Bonus = 5 * 0.05 = 0.25
+SL Bonus = 0.1
+
+Final Reward = 1*5 - 0.1*0 + 0.25 + 0.1 = ₹5.35
+```
+
+---
+
+## Reward Function Python Code
+```python
+def calculate_reward(entry_price, exit_price, holding_minutes, sl_hit, position_type):
+    profit = (exit_price - entry_price) if position_type == 'BUY' else (entry_price - exit_price)
+
+    penalty = 0.1 if (exit_price < entry_price and position_type == 'BUY') or \
+                     (exit_price > entry_price and position_type == 'SELL') else 0
+
+    hold_bonus = 0.05 * holding_minutes
+    sl_bonus = 0.1 if sl_hit else 0
+
+    total_reward = 1 * profit - 0.1 * penalty + hold_bonus + sl_bonus
+    return total_reward
+```
+
+---
+
+## Why This Reward Function is Realistic
+| Feature | Reason |
+|---------|--------|
+|Profit based reward| Encourage directionally correct trades |
+|Penalty| Avoid bad decisions |
+|Hold Bonus| Avoid scalp mentality in trend |
+|SL Bonus| Promote risk management |
+
+---
+
 
 ## 11. Loss Functions Design & Code
 
