@@ -430,6 +430,20 @@ Total_Loss = PPO_Loss + c1 * Critic_Loss + c2 * Confidence_Loss + c3 * Entropy_B
 
 ---
 
+## Symbols Used in Loss Functions - Explanation (With Real Time Example)
+
+| Symbol | Meaning | Example |
+|--------|---------|---------|
+| r | Probability ratio of action change | New_prob=0.4, Old_prob=0.3 → r=0.4/0.3=1.33 |
+| Aₜ | Advantage → Extra profit expected over baseline | Real reward ₹5, Critic estimated ₹3 → Aₜ=5-3=2 |
+| V(sₜ) | Critic predicted future value | Expected profit if stay in current state |
+| Gₜ | Discounted Return | Gₜ=Rₜ+γRₜ₊₁+γ²Rₜ₊₂... Example: R=5, γ=0.99 → Gₜ=5+0.99*4+0.99²*3... |
+| ε | PPO Clipping Param | Limits ratio r between (1-0.2,1+0.2)=0.8 to 1.2 |
+| Confidence | Reliability of action predicted | Output → Confidence=0.85 means trade only if >0.8 |
+| Entropy | Exploration force | Entropy high → model not biased to same action |
+
+---
+
 ### PyTorch Code for Loss Functions
 ```python
 import torch.nn.functional as F
@@ -547,21 +561,7 @@ class ExperienceReplay:
 
 ---
 
-## 15. Symbols Used in Loss Functions - Explanation (With Real Time Example)
-
-| Symbol | Meaning | Example |
-|--------|---------|---------|
-| r | Probability ratio of action change | New_prob=0.4, Old_prob=0.3 → r=0.4/0.3=1.33 |
-| Aₜ | Advantage → Extra profit expected over baseline | Real reward ₹5, Critic estimated ₹3 → Aₜ=5-3=2 |
-| V(sₜ) | Critic predicted future value | Expected profit if stay in current state |
-| Gₜ | Discounted Return | Gₜ=Rₜ+γRₜ₊₁+γ²Rₜ₊₂... Example: R=5, γ=0.99 → Gₜ=5+0.99*4+0.99²*3... |
-| ε | PPO Clipping Param | Limits ratio r between (1-0.2,1+0.2)=0.8 to 1.2 |
-| Confidence | Reliability of action predicted | Output → Confidence=0.85 means trade only if >0.8 |
-| Entropy | Exploration force | Entropy high → model not biased to same action |
-
----
-
-## 16. Evaluation Strategy - Terms, Intuition, Real Time Example & Code
+## 15. Evaluation Strategy - Terms, Intuition, Real Time Example & Code
 
 ### 1. Win Ratio
 
@@ -636,15 +636,6 @@ Risk metric → Lower is safer
 
 ---
 
-## 17. Hyperparameter Tuning Strategy with Real Time Evaluation Metrics
-
-### Process:
-1. Train model
-2. Evaluate using:
-    - Win Ratio
-    - Number of Trades
-    - ROI
-    - Max Drawdown
 
 ### Example Tuning Decision:
 | Issue | Action |
